@@ -1,0 +1,119 @@
+---
+title: "Assignment_PracticalMachineLearning"
+author: "F. Biscarini"
+date: "12/05/2015"
+output: html_document
+---
+# Background
+Automatic devices to measure personal activity have become popular (e.g. Jawbone Up, Nike FuelBand, Fitbit). These devices usually measure "how much" is done, not "how well". Here we will use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways.
+
+```{r, echo=FALSE,results='hide'}
+library(caret)
+library(ggplot2)
+library(knitr)
+setwd("~/Documents/statistics/PracticalMachineLearning/assignment/")
+training <- read.csv("pml-training.csv",sep=",",header=TRUE)
+testing <- read.csv("pml-testing.csv",sep=",",header = TRUE)
+```
+
+
+A total of `r nrow(training)` observations were available to train the model, while a subset with `r nrow(testing)` records was left aside for final validation. Repeated records of the 6 participants were available: this will probably not be modeled explicitly (i.e. repeatability model with covariance structure between repeated records), but all records will be used to predict whether barbell lifts are performed correctly or not. Actually, barbell lifts are categorized in 5 classes: A, B, C, D, E (from best to worse). The model trained in the training set will be applied to predict the A-E classes in the testing set (labels unknown to us).
+Below the barplot of the distribution of barbell lifts quality in the training data.
+
+```{r, echo=FALSE}
+barplot(table(training$classe))
+```
+
+# Pre-processing of data
+Several predictors (`r ncol(training)-2`) are available for the model: this figure includes every column in the training dataset except the barbell class (A-E) and the "performer". We will now have a closer look at these predictors.
+
+```{r}
+tt <- testing[,colSums(is.na(testing)) < nrow(testing)]
+```
+First, the predictors which are all NAs (100% missing) in the testing dataset ("pml-testing.csv") have been removed also from the training dataset: if these are completely missing in the testing set, there is no point in using them for predictions. There were `r ncol(tt)` such predictors in the testing set which were then removed from both the testing and the training sets.
+
+```{r,echo=FALSE}
+classe <- training$classe
+T <- subset(training,select=-classe)
+T <- T[,colnames(T) %in% names(tt)]
+#nsv <- nearZeroVar(T,saveMetrics=TRUE)
+nsv <- nearZeroVar(T)
+```
+Near-zero variables were then checked. The following variable(s) were close to zero: `r names(T)[nsv]` and were removed from the training set. 
+It is now good to look at the distribution of barbell lifts quality among the 6 users, to see whether there is substantial overlap (i.e. some users do it well, other users don't). From the barplot below, it appears that the quality of barplots is evenly distributed among users. Users are therefore likely to be scarcely influential on barlifts quality. This column was removed from the training set, also based on the consideration that we try to predict barbell lifts quality from automatic measures of activity, and not from specific performers.
+For similar reasons, also the variable X, which is simply an index from 1 to the number of samples, was removed, since evidently useless for the prediction task.
+
+```{r}
+T <- T[,-nsv]
+T <- subset(T,select=-c(X,user_name))
+
+p <- ggplot(training, aes(classe))
+p + geom_bar(aes(fill=user_name))
+```
+
+All this left `r ncol(T)` predictors or the analysis.
+
+# Predictions
+
+The problem at hand is a multi-class classification problem: there are 5 classes (quality of barbell lifts, from A to E), and a bunch of predictors can be used for the classification.
+
+Classification trees are a good technique for classification problems. Instead of using single trees, though, it is much better in terms of classification accuracy, to adopt a resampling approach: mutliple trees will be constructed on resampled data, and results will be averaged (via majority vote in this case, since we're in the domain of classification). This approach is known as ``bagging'' (from bootstrap aggregating) and reduces the variance of predictions.
+
+## Bagging
+```{r}
+# treebag <- bag(T,classe,B=10,
+#                bagControl=bagControl(fit=ctreeBag$fit,
+#                                      predict=ctreeBag$pred,
+#                                      aggregate=ctreeBag$aggregate))
+
+load("vorhersagen.RData")
+CM <- confusionMatrix(vorhersagen.training,classe)
+```
+### Confusion matrix in the training set (with Bagging)
+```{r,results='asis'}
+kable(CM[[2]])
+kable(t(CM[[3]]))
+kable(CM[[4]])
+```
+
+### Out-of-bag predictions (in the testing set) - with Bagging
+```{r}
+table(vorhersagen.testing)
+```
+
+##Random Forest
+Random Forest (RF) is another popular method for classification problems. RF is also based on constructing multiple trees from bootstrapping the data. Unlike Bagging, though, RF samples each time a random subset of the predictors (typically the square root of the total number of predictors in the dataset); this apparently small difference has however a big impact on the classification performance, and RF usually outperforms Bagging in terms of out-of-the-bag predictions (predictions in the independent testing/validation set).
+
+```{r}
+# trainSet$classe <- classe
+# 
+# print("Begin RandomForest")
+# ## Random Forest
+# modFit <- train(classe ~ ., 
+#                 data=trainSet, 
+#                 method="rf", 
+#                 trControl=trainControl(method="cv",number=5),
+#                 prox=TRUE,
+#                 allowParallel=TRUE
+# )
+# 
+# print("RF model was fitted")
+# print(modFit$finalModel)
+load("vorhersagenRF.RData")
+CM <- confusionMatrix(vorhersagen.training,classe)
+```
+
+### Confusion matrix in the training set (with Random Forest)
+```{r,results='asis'}
+kable(CM[[2]])
+kable(t(CM[[3]]))
+kable(CM[[4]])
+```
+
+### Out-of-bag predictions (in the testing set) - with Random Forest
+```{r}
+table(vorhersagen.testing)
+```
+
+# Conclusions
+Both Bagging and Random Forest had an accuracy of 100% in the training set (indication of possible overfitting?), but yielded different predictions in the independent testing set: Bagging predicted 16 test observation in class A and 4 in class C, while Random Forest predicted all 20 test observations in class A (highest barbell lifts quality)
